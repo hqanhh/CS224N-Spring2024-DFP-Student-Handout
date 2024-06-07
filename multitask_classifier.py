@@ -141,9 +141,6 @@ class MultitaskBERT(nn.Module):
         return self.sts_regressor(dropout_output).squeeze()
 
 
-
-
-
 def save_model(model, optimizer, args, config, filepath):
     save_info = {
         'model': model.state_dict(),
@@ -168,25 +165,33 @@ def train_multitask(args):
     in datasets.py to load in examples from the Quora and SemEval datasets.
     '''
     device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
+    
     # Create the data and its corresponding datasets and dataloader.
-    sst_train_data, num_labels,para_train_data, sts_train_data = load_multitask_data(args.sst_train,args.para_train,args.sts_train, split ='train')
-    sst_dev_data, num_labels,para_dev_data, sts_dev_data = load_multitask_data(args.sst_dev,args.para_dev,args.sts_dev, split ='train')
+    sst_train_data, num_labels, para_train_data, sts_train_data = load_multitask_data(args.sst_train, args.para_train, args.sts_train, split='train')
+    sst_dev_data, _, para_dev_data, sts_dev_data = load_multitask_data(args.sst_dev, args.para_dev, args.sts_dev, split='dev')
 
     sst_train_data = SentenceClassificationDataset(sst_train_data, args)
     sst_dev_data = SentenceClassificationDataset(sst_dev_data, args)
+    para_train_data = SentencePairDataset(para_train_data, args)
+    para_dev_data = SentencePairDataset(para_dev_data, args)
+    sts_train_data = SentencePairDataset(sts_train_data, args, isRegression=True)
+    sts_dev_data = SentencePairDataset(sts_dev_data, args, isRegression=True)
 
-    sst_train_dataloader = DataLoader(sst_train_data, shuffle=True, batch_size=args.batch_size,
-                                      collate_fn=sst_train_data.collate_fn)
-    sst_dev_dataloader = DataLoader(sst_dev_data, shuffle=False, batch_size=args.batch_size,
-                                    collate_fn=sst_dev_data.collate_fn)
+    sst_train_dataloader = DataLoader(sst_train_data, shuffle=True, batch_size=args.batch_size, collate_fn=sst_train_data.collate_fn)
+    sst_dev_dataloader = DataLoader(sst_dev_data, shuffle=False, batch_size=args.batch_size, collate_fn=sst_dev_data.collate_fn)
+    para_train_dataloader = DataLoader(para_train_data, shuffle=True, batch_size=args.batch_size, collate_fn=para_train_data.collate_fn)
+    para_dev_dataloader = DataLoader(para_dev_data, shuffle=False, batch_size=args.batch_size, collate_fn=para_dev_data.collate_fn)
+    sts_train_dataloader = DataLoader(sts_train_data, shuffle=True, batch_size=args.batch_size, collate_fn=sts_train_data.collate_fn)
+    sts_dev_dataloader = DataLoader(sts_dev_data, shuffle=False, batch_size=args.batch_size, collate_fn=sts_dev_data.collate_fn)
 
     # Init model.
-    config = {'hidden_dropout_prob': args.hidden_dropout_prob,
-              'num_labels': num_labels,
-              'hidden_size': 768,
-              'data_dir': '.',
-              'fine_tune_mode': args.fine_tune_mode}
-
+    config = {
+        'hidden_dropout_prob': args.hidden_dropout_prob,
+        'num_labels': num_labels,
+        'hidden_size': 768,
+        'data_dir': '.',
+        'fine_tune_mode': args.fine_tune_mode
+    }
     config = SimpleNamespace(**config)
 
     model = MultitaskBERT(config)
@@ -201,21 +206,32 @@ def train_multitask(args):
         model.train()
         train_loss = 0
         num_batches = 0
-        for batch in tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            b_ids, b_mask, b_labels = (batch['token_ids'],
-                                       batch['attention_mask'], batch['labels'])
 
-            b_ids = b_ids.to(device)
-            b_mask = b_mask.to(device)
-            b_labels = b_labels.to(device)
-
+        for sst_batch, para_batch, sts_batch in zip(cycle(sst_train_dataloader), para_train_dataloader, sts_train_dataloader):
+            b_ids, b_mask, b_labels = sst_batch['token_ids'].to(device), sst_batch['attention_mask'].to(device), sst_batch['labels'].to(device)
             optimizer.zero_grad()
             logits = model.predict_sentiment(b_ids, b_mask)
             loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
-
             loss.backward()
             optimizer.step()
+            train_loss += loss.item()
+            num_batches += 1
 
+            b_ids, b_mask, b_labels = para_batch['token_ids'].to(device), para_batch['attention_mask'].to(device), para_batch['labels'].to(device)
+            optimizer.zero_grad()
+            logits = model.predict_paraphrase(b_ids, b_mask)
+            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
+            num_batches += 1
+
+            b_ids, b_mask, b_labels = sts_batch['token_ids'].to(device), sts_batch['attention_mask'].to(device), sts_batch['labels'].to(device)
+            optimizer.zero_grad()
+            logits = model.predict_similarity(b_ids, b_mask)
+            loss = F.mse_loss(logits.view(-1), b_labels.view(-1), reduction='sum') / args.batch_size
+            loss.backward()
+            optimizer.step()
             train_loss += loss.item()
             num_batches += 1
 
@@ -229,6 +245,12 @@ def train_multitask(args):
             save_model(model, optimizer, args, config, args.filepath)
 
         print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
+
+def cycle(iterable):
+    while True:
+        for x in iterable:
+            yield x
+
 
 
 def test_multitask(args):
