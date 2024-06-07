@@ -219,7 +219,7 @@ def train_multitask(args):
             num_batches += 1
 
             # Paraphrase training step
-            b_ids_1, b_type_1, b_mask_1, b_ids_2, b_type_2, b_mask_2, b_labels = (
+            b_ids_1, b_type_1, b_mask_1, b_ids_2, b_type_2, b_mask_2, b_labels, _ = (
                 para_batch['token_ids_1'].to(device), para_batch['token_type_ids_1'].to(device),
                 para_batch['attention_mask_1'].to(device), para_batch['token_ids_2'].to(device),
                 para_batch['token_type_ids_2'].to(device), para_batch['attention_mask_2'].to(device),
@@ -227,21 +227,21 @@ def train_multitask(args):
             )
             optimizer.zero_grad()
             logits = model.predict_paraphrase(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
-            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+            loss = F.binary_cross_entropy_with_logits(logits, b_labels.float().view(-1), reduction='sum') / args.batch_size
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
             num_batches += 1
 
             # STS training step
-            b_ids_1, b_type_1, b_mask_1, b_ids_2, b_type_2, b_mask_2, b_labels = (
+            b_ids_1, b_type_1, b_mask_1, b_ids_2, b_type_2, b_mask_2, b_labels, _ = (
                 sts_batch['token_ids_1'].to(device), sts_batch['token_type_ids_1'].to(device),
                 sts_batch['attention_mask_1'].to(device), sts_batch['token_ids_2'].to(device),
                 sts_batch['token_type_ids_2'].to(device), sts_batch['attention_mask_2'].to(device),
                 sts_batch['labels'].to(device)
             )
             optimizer.zero_grad()
-            logits = model.predict_similarity(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
+            logits = model.predict_similarity(b_ids_1, b_type_1, b_mask_1, b_ids_2, b_type_2, b_mask_2)
             loss = F.mse_loss(logits.view(-1), b_labels.view(-1), reduction='sum') / args.batch_size
             loss.backward()
             optimizer.step()
@@ -263,6 +263,7 @@ def cycle(iterable):
     while True:
         for x in iterable:
             yield x
+
 
 
 def test_multitask(args):
