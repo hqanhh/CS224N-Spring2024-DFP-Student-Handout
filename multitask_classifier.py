@@ -20,7 +20,7 @@ from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from bert import BertModel
+from flashattention_bert import BertModel
 from optimizer import AdamW
 from tqdm import tqdm
 
