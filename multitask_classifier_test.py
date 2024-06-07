@@ -56,7 +56,6 @@ N_SENTIMENT_CLASSES = 5
 class MultitaskBERT(nn.Module):
     '''
     This module should use BERT for 3 tasks:
-
     - Sentiment classification (predict_sentiment)
     - Paraphrase detection (predict_paraphrase)
     - Semantic Textual Similarity (predict_similarity)
@@ -64,140 +63,56 @@ class MultitaskBERT(nn.Module):
     def __init__(self, config):
         super(MultitaskBERT, self).__init__()
         self.bert = BertModel.from_pretrained('bert-base-uncased')
-        # last-linear-layer mode does not require updating BERT paramters.
         assert config.fine_tune_mode in ["last-linear-layer", "full-model"]
         for param in self.bert.parameters():
-            if config.fine_tune_mode == 'last-linear-layer':
-                param.requires_grad = False
-            elif config.fine_tune_mode == 'full-model':
-                param.requires_grad = True
-        # You will want to add layers here to perform the downstream tasks.
-        ### TODO
+            param.requires_grad = config.fine_tune_mode == 'full-model'
+        
+        # Sentiment classification
         self.sentiment_dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.sentiment_dense = nn.Linear(BERT_HIDDEN_SIZE, BERT_HIDDEN_SIZE)
+        self.sentiment_attention = nn.MultiheadAttention(BERT_HIDDEN_SIZE, num_heads=4)
         self.sentiment_classifier = nn.Linear(BERT_HIDDEN_SIZE, N_SENTIMENT_CLASSES)
-
+        
         # Paraphrase detection
         self.paraphrase_dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.paraphrase_classifier = nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
-
+        self.paraphrase_dense = nn.Linear(BERT_HIDDEN_SIZE * 2, BERT_HIDDEN_SIZE)
+        self.paraphrase_attention = nn.MultiheadAttention(BERT_HIDDEN_SIZE, num_heads=4)
+        self.paraphrase_classifier = nn.Linear(BERT_HIDDEN_SIZE, 1)
+        
         # Semantic Textual Similarity
         self.sts_dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.sts_regressor = nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
-
-
+        self.sts_dense = nn.Linear(BERT_HIDDEN_SIZE * 2, BERT_HIDDEN_SIZE)
+        self.sts_attention = nn.MultiheadAttention(BERT_HIDDEN_SIZE, num_heads=4)
+        self.sts_regressor = nn.Linear(BERT_HIDDEN_SIZE, 1)
 
     def forward(self, input_ids, attention_mask):
-        'Takes a batch of sentences and produces embeddings for them.'
-        # The final BERT embedding is the hidden state of [CLS] token (the first token)
-        # Here, you can start by just returning the embeddings straight from BERT.
-        # When thinking of improvements, you can later try modifying this
-        # (e.g., by adding other layers).
-        ### TODO
         output = self.bert(input_ids, attention_mask)
         return output['pooler_output']
 
-
-
     def predict_sentiment(self, input_ids, attention_mask):
-        '''Given a batch of sentences, outputs logits for classifying sentiment.
-        There are 5 sentiment classes:
-        (0 - negative, 1- somewhat negative, 2- neutral, 3- somewhat positive, 4- positive)
-        Thus, your output should contain 5 logits for each sentence.
-        '''
-        ### TODO
         bert_output = self.forward(input_ids, attention_mask)
-        dropout_output = self.sentiment_dropout(bert_output)
-        return self.sentiment_classifier(dropout_output)
+        attn_output, _ = self.sentiment_attention(bert_output.unsqueeze(1), bert_output.unsqueeze(1), bert_output.unsqueeze(1))
+        dropout_output = self.sentiment_dropout(attn_output.squeeze(1))
+        dense_output = F.relu(self.sentiment_dense(dropout_output))
+        return self.sentiment_classifier(dense_output)
 
-
-
-    def predict_paraphrase(self,
-                           input_ids_1, attention_mask_1,
-                           input_ids_2, attention_mask_2):
-        '''Given a batch of pairs of sentences, outputs a single logit for predicting whether they are paraphrases.
-        Note that your output should be unnormalized (a logit); it will be passed to the sigmoid function
-        during evaluation.
-        '''
-        ### TODO
+    def predict_paraphrase(self, input_ids_1, attention_mask_1, input_ids_2, attention_mask_2):
         output_1 = self.forward(input_ids_1, attention_mask_1)
         output_2 = self.forward(input_ids_2, attention_mask_2)
         combined_output = torch.cat((output_1, output_2), dim=1)
-        dropout_output = self.paraphrase_dropout(combined_output)
-        return self.paraphrase_classifier(dropout_output).squeeze()
+        attn_output, _ = self.paraphrase_attention(combined_output.unsqueeze(1), combined_output.unsqueeze(1), combined_output.unsqueeze(1))
+        dropout_output = self.paraphrase_dropout(attn_output.squeeze(1))
+        dense_output = F.relu(self.paraphrase_dense(dropout_output))
+        return self.paraphrase_classifier(dense_output).squeeze()
 
-
-
-    def predict_similarity(self,
-                           input_ids_1, attention_mask_1,
-                           input_ids_2, attention_mask_2):
-        '''Given a batch of pairs of sentences, outputs a single logit corresponding to how similar they are.
-        Note that your output should be unnormalized (a logit).
-        '''
-        ### TODO
+    def predict_similarity(self, input_ids_1, attention_mask_1, input_ids_2, attention_mask_2):
         output_1 = self.forward(input_ids_1, attention_mask_1)
         output_2 = self.forward(input_ids_2, attention_mask_2)
         combined_output = torch.cat((output_1, output_2), dim=1)
-        dropout_output = self.sts_dropout(combined_output)
-        return self.sts_regressor(dropout_output).squeeze()
-
-
-# class MultitaskBERT(nn.Module):
-#     '''
-#     This module should use BERT for 3 tasks:
-#     - Sentiment classification (predict_sentiment)
-#     - Paraphrase detection (predict_paraphrase)
-#     - Semantic Textual Similarity (predict_similarity)
-#     '''
-#     def __init__(self, config):
-#         super(MultitaskBERT, self).__init__()
-#         self.bert = BertModel.from_pretrained('bert-base-uncased')
-#         assert config.fine_tune_mode in ["last-linear-layer", "full-model"]
-#         for param in self.bert.parameters():
-#             if config.fine_tune_mode == 'last-linear-layer':
-#                 param.requires_grad = False
-#             elif config.fine_tune_mode == 'full-model':
-#                 param.requires_grad = True
-        
-#         # Sentiment classification
-#         self.sentiment_dropout = nn.Dropout(config.hidden_dropout_prob)
-#         self.sentiment_dense = nn.Linear(BERT_HIDDEN_SIZE, BERT_HIDDEN_SIZE)
-#         self.sentiment_classifier = nn.Linear(BERT_HIDDEN_SIZE, N_SENTIMENT_CLASSES)
-        
-#         # Paraphrase detection
-#         self.paraphrase_dropout = nn.Dropout(config.hidden_dropout_prob)
-#         self.paraphrase_dense = nn.Linear(BERT_HIDDEN_SIZE * 2, BERT_HIDDEN_SIZE)
-#         self.paraphrase_classifier = nn.Linear(BERT_HIDDEN_SIZE, 1)
-        
-#         # Semantic Textual Similarity
-#         self.sts_dropout = nn.Dropout(config.hidden_dropout_prob)
-#         self.sts_dense = nn.Linear(BERT_HIDDEN_SIZE * 2, BERT_HIDDEN_SIZE)
-#         self.sts_regressor = nn.Linear(BERT_HIDDEN_SIZE, 1)
-
-#     def forward(self, input_ids, attention_mask):
-#         output = self.bert(input_ids, attention_mask)
-#         return output['pooler_output']
-
-#     def predict_sentiment(self, input_ids, attention_mask):
-#         bert_output = self.forward(input_ids, attention_mask)
-#         dropout_output = self.sentiment_dropout(bert_output)
-#         dense_output = F.relu(self.sentiment_dense(dropout_output))
-#         return self.sentiment_classifier(dense_output)
-
-#     def predict_paraphrase(self, input_ids_1, attention_mask_1, input_ids_2, attention_mask_2):
-#         output_1 = self.forward(input_ids_1, attention_mask_1)
-#         output_2 = self.forward(input_ids_2, attention_mask_2)
-#         combined_output = torch.cat((output_1, output_2), dim=1)
-#         dropout_output = self.paraphrase_dropout(combined_output)
-#         dense_output = F.relu(self.paraphrase_dense(dropout_output))
-#         return self.paraphrase_classifier(dense_output).squeeze()
-
-#     def predict_similarity(self, input_ids_1, attention_mask_1, input_ids_2, attention_mask_2):
-#         output_1 = self.forward(input_ids_1, attention_mask_1)
-#         output_2 = self.forward(input_ids_2, attention_mask_2)
-#         combined_output = torch.cat((output_1, output_2), dim=1)
-#         dropout_output = self.sts_dropout(combined_output)
-#         dense_output = F.relu(self.sts_dense(dropout_output))
-#         return self.sts_regressor(dense_output).squeeze()
+        attn_output, _ = self.sts_attention(combined_output.unsqueeze(1), combined_output.unsqueeze(1), combined_output.unsqueeze(1))
+        dropout_output = self.sts_dropout(attn_output.squeeze(1))
+        dense_output = F.relu(self.sts_dense(dropout_output))
+        return self.sts_regressor(dense_output).squeeze()
 
 
 def save_model(model, optimizer, args, config, filepath):
@@ -216,16 +131,8 @@ def save_model(model, optimizer, args, config, filepath):
 
 
 def train_multitask(args):
-    '''Train MultitaskBERT.
-
-    Currently only trains on SST dataset. The way you incorporate training examples
-    from other datasets into the training procedure is up to you. To begin, take a
-    look at test_multitask below to see how you can use the custom torch `Dataset`s
-    in datasets.py to load in examples from the Quora and SemEval datasets.
-    '''
+    '''Train MultitaskBERT.'''
     device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
-    
-    # Create the data and its corresponding datasets and dataloader.
     sst_train_data, num_labels, para_train_data, sts_train_data = load_multitask_data(args.sst_train, args.para_train, args.sts_train, split='train')
     sst_dev_data, _, para_dev_data, sts_dev_data = load_multitask_data(args.sst_dev, args.para_dev, args.sts_dev, split='dev')
 
@@ -243,7 +150,6 @@ def train_multitask(args):
     sts_train_dataloader = DataLoader(sts_train_data, shuffle=True, batch_size=args.batch_size, collate_fn=sts_train_data.collate_fn)
     sts_dev_dataloader = DataLoader(sts_dev_data, shuffle=False, batch_size=args.batch_size, collate_fn=sts_dev_data.collate_fn)
 
-    # Init model.
     config = {
         'hidden_dropout_prob': args.hidden_dropout_prob,
         'num_labels': num_labels,
@@ -260,7 +166,13 @@ def train_multitask(args):
     optimizer = AdamW(model.parameters(), lr=lr)
     best_dev_acc = 0
 
-    # Run for the specified number of epochs.
+    # Task-specific weights
+    sentiment_weight = 0.5
+    paraphrase_weight = 0.25
+    sts_weight = 0.25
+
+    total_loss = 0
+
     for epoch in range(args.epochs):
         model.train()
         train_loss = 0
@@ -272,9 +184,9 @@ def train_multitask(args):
             optimizer.zero_grad()
             logits = model.predict_sentiment(b_ids, b_mask)
             loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+            total_loss += sentiment_weight * loss.item()
             loss.backward()
             optimizer.step()
-            train_loss += loss.item()
             num_batches += 1
 
             # Paraphrase training step
@@ -287,9 +199,9 @@ def train_multitask(args):
             optimizer.zero_grad()
             logits = model.predict_paraphrase(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
             loss = F.binary_cross_entropy_with_logits(logits, b_labels.float().view(-1), reduction='sum') / args.batch_size
+            total_loss += paraphrase_weight * loss.item()
             loss.backward()
             optimizer.step()
-            train_loss += loss.item()
             num_batches += 1
 
             # STS training step
@@ -302,12 +214,12 @@ def train_multitask(args):
             optimizer.zero_grad()
             logits = model.predict_similarity(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
             loss = F.mse_loss(logits.view(-1), b_labels.float().view(-1), reduction='sum') / args.batch_size
+            total_loss += sts_weight * loss.item()
             loss.backward()
             optimizer.step()
-            train_loss += loss.item()
             num_batches += 1
 
-        train_loss = train_loss / (num_batches)
+        train_loss = total_loss / num_batches
 
         train_acc, train_f1, *_ = model_eval_sst(sst_train_dataloader, model, device)
         dev_acc, dev_f1, *_ = model_eval_sst(sst_dev_dataloader, model, device)
@@ -322,7 +234,6 @@ def cycle(iterable):
     while True:
         for x in iterable:
             yield x
-
 
 
 def test_multitask(args):
