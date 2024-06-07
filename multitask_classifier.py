@@ -242,7 +242,7 @@ def train_multitask(args):
             )
             optimizer.zero_grad()
             logits = model.predict_similarity(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
-            loss = F.mse_loss(logits.view(-1), b_labels.view(-1), reduction='sum') / args.batch_size
+            loss = F.mse_loss(logits.view(-1), b_labels.float().view(-1), reduction='sum') / args.batch_size
             loss.backward()
             optimizer.step()
             train_loss += loss.item()
