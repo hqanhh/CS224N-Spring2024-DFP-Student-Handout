@@ -207,7 +207,7 @@ def train_multitask(args):
         train_loss = 0
         num_batches = 0
 
-        for sst_batch, para_batch, sts_batch in zip(cycle(sst_train_dataloader), para_train_dataloader, sts_train_dataloader):
+        for sst_batch, para_batch, sts_batch in zip(sst_train_dataloader, para_train_dataloader, sts_train_dataloader):
             b_ids, b_mask, b_labels = sst_batch['token_ids'].to(device), sst_batch['attention_mask'].to(device), sst_batch['labels'].to(device)
             optimizer.zero_grad()
             logits = model.predict_sentiment(b_ids, b_mask)
@@ -246,10 +246,6 @@ def train_multitask(args):
 
         print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
 
-def cycle(iterable):
-    while True:
-        for x in iterable:
-            yield x
 
 
 
