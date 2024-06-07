@@ -73,7 +73,17 @@ class MultitaskBERT(nn.Module):
                 param.requires_grad = True
         # You will want to add layers here to perform the downstream tasks.
         ### TODO
-        raise NotImplementedError
+        self.sentiment_dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.sentiment_classifier = nn.Linear(BERT_HIDDEN_SIZE, N_SENTIMENT_CLASSES)
+
+        # Paraphrase detection
+        self.paraphrase_dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.paraphrase_classifier = nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
+
+        # Semantic Textual Similarity
+        self.sts_dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.sts_regressor = nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
+
 
 
     def forward(self, input_ids, attention_mask):
@@ -83,7 +93,9 @@ class MultitaskBERT(nn.Module):
         # When thinking of improvements, you can later try modifying this
         # (e.g., by adding other layers).
         ### TODO
-        raise NotImplementedError
+        output = self.bert(input_ids, attention_mask)
+        return output['pooler_output']
+
 
 
     def predict_sentiment(self, input_ids, attention_mask):
@@ -93,7 +105,10 @@ class MultitaskBERT(nn.Module):
         Thus, your output should contain 5 logits for each sentence.
         '''
         ### TODO
-        raise NotImplementedError
+        bert_output = self.forward(input_ids, attention_mask)
+        dropout_output = self.sentiment_dropout(bert_output)
+        return self.sentiment_classifier(dropout_output)
+
 
 
     def predict_paraphrase(self,
@@ -104,7 +119,12 @@ class MultitaskBERT(nn.Module):
         during evaluation.
         '''
         ### TODO
-        raise NotImplementedError
+        output_1 = self.forward(input_ids_1, attention_mask_1)
+        output_2 = self.forward(input_ids_2, attention_mask_2)
+        combined_output = torch.cat((output_1, output_2), dim=1)
+        dropout_output = self.paraphrase_dropout(combined_output)
+        return self.paraphrase_classifier(dropout_output).squeeze()
+
 
 
     def predict_similarity(self,
@@ -114,7 +134,12 @@ class MultitaskBERT(nn.Module):
         Note that your output should be unnormalized (a logit).
         '''
         ### TODO
-        raise NotImplementedError
+        output_1 = self.forward(input_ids_1, attention_mask_1)
+        output_2 = self.forward(input_ids_2, attention_mask_2)
+        combined_output = torch.cat((output_1, output_2), dim=1)
+        dropout_output = self.sts_dropout(combined_output)
+        return self.sts_regressor(dropout_output).squeeze()
+
 
 
 
