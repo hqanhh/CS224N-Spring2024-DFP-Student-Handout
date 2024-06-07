@@ -53,10 +53,97 @@ BERT_HIDDEN_SIZE = 768
 N_SENTIMENT_CLASSES = 5
 
 
+# class MultitaskBERT(nn.Module):
+#     '''
+#     This module should use BERT for 3 tasks:
+
+#     - Sentiment classification (predict_sentiment)
+#     - Paraphrase detection (predict_paraphrase)
+#     - Semantic Textual Similarity (predict_similarity)
+#     '''
+#     def __init__(self, config):
+#         super(MultitaskBERT, self).__init__()
+#         self.bert = BertModel.from_pretrained('bert-base-uncased')
+#         # last-linear-layer mode does not require updating BERT paramters.
+#         assert config.fine_tune_mode in ["last-linear-layer", "full-model"]
+#         for param in self.bert.parameters():
+#             if config.fine_tune_mode == 'last-linear-layer':
+#                 param.requires_grad = False
+#             elif config.fine_tune_mode == 'full-model':
+#                 param.requires_grad = True
+#         # You will want to add layers here to perform the downstream tasks.
+#         ### TODO
+#         self.sentiment_dropout = nn.Dropout(config.hidden_dropout_prob)
+#         self.sentiment_classifier = nn.Linear(BERT_HIDDEN_SIZE, N_SENTIMENT_CLASSES)
+
+#         # Paraphrase detection
+#         self.paraphrase_dropout = nn.Dropout(config.hidden_dropout_prob)
+#         self.paraphrase_classifier = nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
+
+#         # Semantic Textual Similarity
+#         self.sts_dropout = nn.Dropout(config.hidden_dropout_prob)
+#         self.sts_regressor = nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
+
+
+
+#     def forward(self, input_ids, attention_mask):
+#         'Takes a batch of sentences and produces embeddings for them.'
+#         # The final BERT embedding is the hidden state of [CLS] token (the first token)
+#         # Here, you can start by just returning the embeddings straight from BERT.
+#         # When thinking of improvements, you can later try modifying this
+#         # (e.g., by adding other layers).
+#         ### TODO
+#         output = self.bert(input_ids, attention_mask)
+#         return output['pooler_output']
+
+
+
+#     def predict_sentiment(self, input_ids, attention_mask):
+#         '''Given a batch of sentences, outputs logits for classifying sentiment.
+#         There are 5 sentiment classes:
+#         (0 - negative, 1- somewhat negative, 2- neutral, 3- somewhat positive, 4- positive)
+#         Thus, your output should contain 5 logits for each sentence.
+#         '''
+#         ### TODO
+#         bert_output = self.forward(input_ids, attention_mask)
+#         dropout_output = self.sentiment_dropout(bert_output)
+#         return self.sentiment_classifier(dropout_output)
+
+
+
+#     def predict_paraphrase(self,
+#                            input_ids_1, attention_mask_1,
+#                            input_ids_2, attention_mask_2):
+#         '''Given a batch of pairs of sentences, outputs a single logit for predicting whether they are paraphrases.
+#         Note that your output should be unnormalized (a logit); it will be passed to the sigmoid function
+#         during evaluation.
+#         '''
+#         ### TODO
+#         output_1 = self.forward(input_ids_1, attention_mask_1)
+#         output_2 = self.forward(input_ids_2, attention_mask_2)
+#         combined_output = torch.cat((output_1, output_2), dim=1)
+#         dropout_output = self.paraphrase_dropout(combined_output)
+#         return self.paraphrase_classifier(dropout_output).squeeze()
+
+
+
+#     def predict_similarity(self,
+#                            input_ids_1, attention_mask_1,
+#                            input_ids_2, attention_mask_2):
+#         '''Given a batch of pairs of sentences, outputs a single logit corresponding to how similar they are.
+#         Note that your output should be unnormalized (a logit).
+#         '''
+#         ### TODO
+#         output_1 = self.forward(input_ids_1, attention_mask_1)
+#         output_2 = self.forward(input_ids_2, attention_mask_2)
+#         combined_output = torch.cat((output_1, output_2), dim=1)
+#         dropout_output = self.sts_dropout(combined_output)
+#         return self.sts_regressor(dropout_output).squeeze()
+
+
 class MultitaskBERT(nn.Module):
     '''
     This module should use BERT for 3 tasks:
-
     - Sentiment classification (predict_sentiment)
     - Paraphrase detection (predict_paraphrase)
     - Semantic Textual Similarity (predict_similarity)
@@ -64,81 +151,53 @@ class MultitaskBERT(nn.Module):
     def __init__(self, config):
         super(MultitaskBERT, self).__init__()
         self.bert = BertModel.from_pretrained('bert-base-uncased')
-        # last-linear-layer mode does not require updating BERT paramters.
         assert config.fine_tune_mode in ["last-linear-layer", "full-model"]
         for param in self.bert.parameters():
             if config.fine_tune_mode == 'last-linear-layer':
                 param.requires_grad = False
             elif config.fine_tune_mode == 'full-model':
                 param.requires_grad = True
-        # You will want to add layers here to perform the downstream tasks.
-        ### TODO
+        
+        # Sentiment classification
         self.sentiment_dropout = nn.Dropout(config.hidden_dropout_prob)
+        self.sentiment_dense = nn.Linear(BERT_HIDDEN_SIZE, BERT_HIDDEN_SIZE)
         self.sentiment_classifier = nn.Linear(BERT_HIDDEN_SIZE, N_SENTIMENT_CLASSES)
-
+        
         # Paraphrase detection
         self.paraphrase_dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.paraphrase_classifier = nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
-
+        self.paraphrase_dense = nn.Linear(BERT_HIDDEN_SIZE * 2, BERT_HIDDEN_SIZE)
+        self.paraphrase_classifier = nn.Linear(BERT_HIDDEN_SIZE, 1)
+        
         # Semantic Textual Similarity
         self.sts_dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.sts_regressor = nn.Linear(BERT_HIDDEN_SIZE * 2, 1)
-
-
+        self.sts_dense = nn.Linear(BERT_HIDDEN_SIZE * 2, BERT_HIDDEN_SIZE)
+        self.sts_regressor = nn.Linear(BERT_HIDDEN_SIZE, 1)
 
     def forward(self, input_ids, attention_mask):
-        'Takes a batch of sentences and produces embeddings for them.'
-        # The final BERT embedding is the hidden state of [CLS] token (the first token)
-        # Here, you can start by just returning the embeddings straight from BERT.
-        # When thinking of improvements, you can later try modifying this
-        # (e.g., by adding other layers).
-        ### TODO
         output = self.bert(input_ids, attention_mask)
         return output['pooler_output']
 
-
-
     def predict_sentiment(self, input_ids, attention_mask):
-        '''Given a batch of sentences, outputs logits for classifying sentiment.
-        There are 5 sentiment classes:
-        (0 - negative, 1- somewhat negative, 2- neutral, 3- somewhat positive, 4- positive)
-        Thus, your output should contain 5 logits for each sentence.
-        '''
-        ### TODO
         bert_output = self.forward(input_ids, attention_mask)
         dropout_output = self.sentiment_dropout(bert_output)
-        return self.sentiment_classifier(dropout_output)
+        dense_output = F.relu(self.sentiment_dense(dropout_output))
+        return self.sentiment_classifier(dense_output)
 
-
-
-    def predict_paraphrase(self,
-                           input_ids_1, attention_mask_1,
-                           input_ids_2, attention_mask_2):
-        '''Given a batch of pairs of sentences, outputs a single logit for predicting whether they are paraphrases.
-        Note that your output should be unnormalized (a logit); it will be passed to the sigmoid function
-        during evaluation.
-        '''
-        ### TODO
+    def predict_paraphrase(self, input_ids_1, attention_mask_1, input_ids_2, attention_mask_2):
         output_1 = self.forward(input_ids_1, attention_mask_1)
         output_2 = self.forward(input_ids_2, attention_mask_2)
         combined_output = torch.cat((output_1, output_2), dim=1)
         dropout_output = self.paraphrase_dropout(combined_output)
-        return self.paraphrase_classifier(dropout_output).squeeze()
+        dense_output = F.relu(self.paraphrase_dense(dropout_output))
+        return self.paraphrase_classifier(dense_output).squeeze()
 
-
-
-    def predict_similarity(self,
-                           input_ids_1, attention_mask_1,
-                           input_ids_2, attention_mask_2):
-        '''Given a batch of pairs of sentences, outputs a single logit corresponding to how similar they are.
-        Note that your output should be unnormalized (a logit).
-        '''
-        ### TODO
+    def predict_similarity(self, input_ids_1, attention_mask_1, input_ids_2, attention_mask_2):
         output_1 = self.forward(input_ids_1, attention_mask_1)
         output_2 = self.forward(input_ids_2, attention_mask_2)
         combined_output = torch.cat((output_1, output_2), dim=1)
         dropout_output = self.sts_dropout(combined_output)
-        return self.sts_regressor(dropout_output).squeeze()
+        dense_output = F.relu(self.sts_dense(dropout_output))
+        return self.sts_regressor(dense_output).squeeze()
 
 
 def save_model(model, optimizer, args, config, filepath):
