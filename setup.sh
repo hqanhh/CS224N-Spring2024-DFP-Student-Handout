@@ -3,7 +3,8 @@
 conda create -n cs224n_dfp python=3.8
 conda activate cs224n_dfp
 
-pip install torch torchvision torchaudio
+pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu121
+# pip install torch torchvision torchaudio
 pip install tqdm==4.58.0
 pip install requests==2.25.1
 pip install importlib-metadata==3.7.0

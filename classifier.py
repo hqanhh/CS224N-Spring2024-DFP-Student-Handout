@@ -9,8 +9,8 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import f1_score, accuracy_score
 
 from tokenizer import BertTokenizer
-from flashattention_bert import BertModel
-# from bert import BertModel
+# from flashattention_bert import BertModel
+from bert import BertModel
 from optimizer import AdamW
 from tqdm import tqdm
 import torch.nn as nn

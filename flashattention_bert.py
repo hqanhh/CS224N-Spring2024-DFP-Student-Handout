@@ -37,9 +37,12 @@ class BertSelfAttention(nn.Module):
     def attention(self, key, query, value, attention_mask):
         # Using torch.nn.functional.scaled_dot_product_attention
         dropout_p = self.dropout.p if self.training else 0.0
-        
-        with torch.backends.cuda.sdp_kernel(enable_math=False):
-            attn_output = F.scaled_dot_product_attention(query, key, value, attn_mask=attention_mask, dropout_p=dropout_p)
+        from torch.nn.attention import SDPBackend, sdpa_kernel
+
+        # with sdpa_kernel([SDPBackend.MATH, SDPBackend.EFFICIENT_ATTENTION]):
+        # with sdpa_kernel(SDPBackend.FLASH_ATTENTION):          
+        attn_output = F.scaled_dot_product_attention(query, key, value, attn_mask=attention_mask, dropout_p=dropout_p)
+            # attn_output = F.scaled_dot_product_attention(query.half(), key.half(), value.half(), dropout_p=dropout_p).float()
         
         B, nh, T, hs = query.size()
         attn_output = attn_output.transpose(1, 2).contiguous().view(B, T, nh * hs)  # re-assemble all head outputs side by side
