@@ -219,7 +219,7 @@ def train_multitask(args):
             num_batches += 1
 
             # Paraphrase training step
-            b_ids_1, b_type_1, b_mask_1, b_ids_2, b_type_2, b_mask_2, b_labels, _ = (
+            b_ids_1, b_type_1, b_mask_1, b_ids_2, b_type_2, b_mask_2, b_labels = (
                 para_batch['token_ids_1'].to(device), para_batch['token_type_ids_1'].to(device),
                 para_batch['attention_mask_1'].to(device), para_batch['token_ids_2'].to(device),
                 para_batch['token_type_ids_2'].to(device), para_batch['attention_mask_2'].to(device),
@@ -234,7 +234,7 @@ def train_multitask(args):
             num_batches += 1
 
             # STS training step
-            b_ids_1, b_type_1, b_mask_1, b_ids_2, b_type_2, b_mask_2, b_labels, _ = (
+            b_ids_1, b_type_1, b_mask_1, b_ids_2, b_type_2, b_mask_2, b_labels = (
                 sts_batch['token_ids_1'].to(device), sts_batch['token_type_ids_1'].to(device),
                 sts_batch['attention_mask_1'].to(device), sts_batch['token_ids_2'].to(device),
                 sts_batch['token_type_ids_2'].to(device), sts_batch['attention_mask_2'].to(device),
