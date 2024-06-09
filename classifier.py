@@ -8,7 +8,6 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import f1_score, accuracy_score
 
 from tokenizer import BertTokenizer
-from bert import BertModel
 from optimizer import AdamW
 from tqdm import tqdm
 import torch.nn as nn
@@ -354,6 +353,8 @@ def get_args():
     parser.add_argument("--lr", type=float, help="learning rate, default lr for 'pretrain': 1e-3, 'finetune': 1e-5",
                         default=1e-3)
 
+    parser.add_argument("--use_flash_attention", action='store_true')
+
     args = parser.parse_args()
     return args
 
@@ -362,9 +363,14 @@ if __name__ == "__main__":
     args = get_args()
     seed_everything(args.seed)
 
+    if args.use_flash_attention:
+        from flashattention_bert import BertModel
+    else:
+        from bert import BertModel
+
     print('Training Sentiment Classifier on SST...')
     config = SimpleNamespace(
-        filepath=f'sst-classifier-{args.fine_tune_mode}.pt',
+        filepath=f'sst-classifier-{args.fine_tune_mode}-flash-attention.pt',
         lr=args.lr,
         use_gpu=args.use_gpu,
         epochs=args.epochs,
@@ -374,8 +380,8 @@ if __name__ == "__main__":
         dev='data/ids-sst-dev.csv',
         test='data/ids-sst-test-student.csv',
         fine_tune_mode=args.fine_tune_mode,
-        dev_out = 'predictions/' + args.fine_tune_mode + '-sst-dev-out.csv',
-        test_out = 'predictions/' + args.fine_tune_mode + '-sst-test-out.csv'
+        dev_out = 'predictions/' + args.fine_tune_mode + '-flash-attention' + '-sst-dev-out.csv',
+        test_out = 'predictions/' + args.fine_tune_mode + '-flash-attention' + '-sst-test-out.csv'
     )
 
     train(config)
@@ -385,7 +391,7 @@ if __name__ == "__main__":
 
     print('Training Sentiment Classifier on cfimdb...')
     config = SimpleNamespace(
-        filepath=f'cfimdb-classifier-{args.fine_tune_mode}.pt',
+        filepath=f'cfimdb-classifier-{args.fine_tune_mode}-flash-attention.pt',
         lr=args.lr,
         use_gpu=args.use_gpu,
         epochs=args.epochs,
@@ -395,8 +401,8 @@ if __name__ == "__main__":
         dev='data/ids-cfimdb-dev.csv',
         test='data/ids-cfimdb-test-student.csv',
         fine_tune_mode=args.fine_tune_mode,
-        dev_out = 'predictions/' + args.fine_tune_mode + '-cfimdb-dev-out.csv',
-        test_out = 'predictions/' + args.fine_tune_mode + '-cfimdb-test-out.csv'
+        dev_out = 'predictions/' + args.fine_tune_mode + '-flash-attention'+ '-cfimdb-dev-out.csv',
+        test_out = 'predictions/' + args.fine_tune_mode + '-flash-attention'+ '-cfimdb-test-out.csv'
     )
 
     train(config)

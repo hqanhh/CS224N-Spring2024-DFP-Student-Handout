@@ -20,7 +20,6 @@ from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from bert import BertModel
 from optimizer import AdamW
 from tqdm import tqdm
 
@@ -34,6 +33,8 @@ from datasets import (
 
 from evaluation import model_eval_sst, model_eval_multitask, model_eval_test_multitask
 
+import time 
+import tracemalloc
 
 TQDM_DISABLE=False
 
@@ -168,6 +169,7 @@ def train_multitask(args):
     in datasets.py to load in examples from the Quora and SemEval datasets.
     '''
     device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
+    print(f"device: {device}")
     # Create the data and its corresponding datasets and dataloader.
     sst_train_data, num_labels,para_train_data, sts_train_data = load_multitask_data(args.sst_train,args.para_train,args.sts_train, split ='train')
     sst_dev_data, num_labels,para_dev_data, sts_dev_data = load_multitask_data(args.sst_dev,args.para_dev,args.sts_dev, split ='train')
@@ -179,6 +181,18 @@ def train_multitask(args):
                                       collate_fn=sst_train_data.collate_fn)
     sst_dev_dataloader = DataLoader(sst_dev_data, shuffle=False, batch_size=args.batch_size,
                                     collate_fn=sst_dev_data.collate_fn)
+
+    if args.use_cross_task_data:
+        para_train_data = SentencePairDataset(para_train_data, args)
+        para_dev_data = SentencePairDataset(para_dev_data, args)
+        sts_train_data = SentencePairDataset(sts_train_data, args, isRegression=True)
+        sts_dev_data = SentencePairDataset(sts_dev_data, args, isRegression=True)
+
+        para_train_dataloader = DataLoader(para_train_data, shuffle=True, batch_size=args.batch_size, collate_fn=para_train_data.collate_fn)
+        para_dev_dataloader = DataLoader(para_dev_data, shuffle=False, batch_size=args.batch_size, collate_fn=para_dev_data.collate_fn)
+        sts_train_dataloader = DataLoader(sts_train_data, shuffle=True, batch_size=args.batch_size, collate_fn=sts_train_data.collate_fn)
+        sts_dev_dataloader = DataLoader(sts_dev_data, shuffle=False, batch_size=args.batch_size, collate_fn=sts_dev_data.collate_fn)
+
 
     # Init model.
     config = {'hidden_dropout_prob': args.hidden_dropout_prob,
@@ -201,40 +215,114 @@ def train_multitask(args):
         model.train()
         train_loss = 0
         num_batches = 0
-        for batch in tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
-            b_ids, b_mask, b_labels = (batch['token_ids'],
-                                       batch['attention_mask'], batch['labels'])
+        tracemalloc.start() 
+        if args.use_cross_task_data:
+            for sst_batch, para_batch, sts_batch in tqdm(zip(cycle(sst_train_dataloader), para_train_dataloader, cycle(sts_train_dataloader)), desc=f"train-{epoch}", disable=TQDM_DISABLE):
+            #for sst_batch, para_batch, sts_batch in tqdm(zip(sst_train_dataloader, para_train_dataloader, sts_train_dataloader), desc=f"train-{epoch}", disable=TQDM_DISABLE):    
+                # SST training step
+                b_ids, b_mask, b_labels = sst_batch['token_ids'].to(device), sst_batch['attention_mask'].to(device), sst_batch['labels'].to(device)
+                optimizer.zero_grad()
+                logits = model.predict_sentiment(b_ids, b_mask)
+                loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
+                num_batches += 1
 
-            b_ids = b_ids.to(device)
-            b_mask = b_mask.to(device)
-            b_labels = b_labels.to(device)
+                # Paraphrase training step
+                b_ids_1, b_type_1, b_mask_1, b_ids_2, b_type_2, b_mask_2, b_labels = (
+                    para_batch['token_ids_1'].to(device), para_batch['token_type_ids_1'].to(device),
+                    para_batch['attention_mask_1'].to(device), para_batch['token_ids_2'].to(device),
+                    para_batch['token_type_ids_2'].to(device), para_batch['attention_mask_2'].to(device),
+                    para_batch['labels'].to(device)
+                )
+                optimizer.zero_grad()
+                logits = model.predict_paraphrase(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
+                loss = F.binary_cross_entropy_with_logits(logits, b_labels.float().view(-1), reduction='sum') / args.batch_size
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
+                num_batches += 1
 
-            optimizer.zero_grad()
-            logits = model.predict_sentiment(b_ids, b_mask)
-            loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+                # STS training step
+                b_ids_1, b_type_1, b_mask_1, b_ids_2, b_type_2, b_mask_2, b_labels = (
+                    sts_batch['token_ids_1'].to(device), sts_batch['token_type_ids_1'].to(device),
+                    sts_batch['attention_mask_1'].to(device), sts_batch['token_ids_2'].to(device),
+                    sts_batch['token_type_ids_2'].to(device), sts_batch['attention_mask_2'].to(device),
+                    sts_batch['labels'].to(device)
+                )
+                optimizer.zero_grad()
+                logits = model.predict_similarity(b_ids_1, b_mask_1, b_ids_2, b_mask_2)
+                loss = F.mse_loss(logits.view(-1), b_labels.float().view(-1), reduction='sum') / args.batch_size
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
+                num_batches += 1
 
-            loss.backward()
-            optimizer.step()
+            current, peak = tracemalloc.get_traced_memory()  # Get memory usage
+            tracemalloc.stop()  # Stop tracing memory allocations
+            memory_used = peak / (1024 * 1024)
+            print(f"Epoch {epoch}: Mem Usage: {memory_used}")
+            (
+            sentiment_dev_accuracy,
+            _,
+            _,
+            paraphrase_dev_accuracy,
+            _,
+            _,
+            sts_dev_corr,
+            _,
+            _) = model_eval_multitask(sst_dev_dataloader, para_dev_dataloader, sts_dev_dataloader, model, device)
 
-            train_loss += loss.item()
-            num_batches += 1
+            dev_acc = np.mean([sentiment_dev_accuracy, paraphrase_dev_accuracy, sts_dev_corr])
+            if dev_acc > best_dev_acc:
+                best_dev_acc = dev_acc
+                save_model(model, optimizer, args, config, args.filepath)
 
-        train_loss = train_loss / (num_batches)
+            print(
+                f"Epoch {epoch}: MEAN: dev acc :: {dev_acc :.3f}"
+            )
 
-        train_acc, train_f1, *_ = model_eval_sst(sst_train_dataloader, model, device)
-        dev_acc, dev_f1, *_ = model_eval_sst(sst_dev_dataloader, model, device)
+        else:
+            for batch in tqdm(sst_train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE):
+                b_ids, b_mask, b_labels = (batch['token_ids'],
+                                        batch['attention_mask'], batch['labels'])
 
-        if dev_acc > best_dev_acc:
-            best_dev_acc = dev_acc
-            save_model(model, optimizer, args, config, args.filepath)
+                b_ids = b_ids.to(device)
+                b_mask = b_mask.to(device)
+                b_labels = b_labels.to(device)
 
-        print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
+                optimizer.zero_grad()
+                logits = model.predict_sentiment(b_ids, b_mask)
+                loss = F.cross_entropy(logits, b_labels.view(-1), reduction='sum') / args.batch_size
 
+                loss.backward()
+                optimizer.step()
+
+                train_loss += loss.item()
+                num_batches += 1
+
+            train_loss = train_loss / (num_batches)
+
+            train_acc, train_f1, *_ = model_eval_sst(sst_train_dataloader, model, device)
+            dev_acc, dev_f1, *_ = model_eval_sst(sst_dev_dataloader, model, device)
+
+            if dev_acc > best_dev_acc:
+                best_dev_acc = dev_acc
+                save_model(model, optimizer, args, config, args.filepath)
+
+            print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
+
+def cycle(iterable):
+    while True:
+        for x in iterable:
+            yield x
 
 def test_multitask(args):
     '''Test and save predictions on the dev and test sets of all three tasks.'''
     with torch.no_grad():
         device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
+        print(f"device: {device}")
         saved = torch.load(args.filepath)
         config = saved['model_config']
 
@@ -338,7 +426,7 @@ def get_args():
     parser.add_argument("--fine-tune-mode", type=str,
                         help='last-linear-layer: the BERT parameters are frozen and the task specific head parameters are updated; full-model: BERT parameters are updated as well',
                         choices=('last-linear-layer', 'full-model'), default="last-linear-layer")
-    parser.add_argument("--use_gpu", action='store_true')
+    parser.add_argument("--use_gpu", action='store_false')
 
     parser.add_argument("--sst_dev_out", type=str, default="predictions/sst-dev-output.csv")
     parser.add_argument("--sst_test_out", type=str, default="predictions/sst-test-output.csv")
@@ -353,13 +441,42 @@ def get_args():
     parser.add_argument("--hidden_dropout_prob", type=float, default=0.3)
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-5)
 
+    parser.add_argument("--use_cross_task_data", action='store_true')
+    parser.add_argument("--use_flash_attention", action='store_true')
+
     args = parser.parse_args()
     return args
 
 
 if __name__ == "__main__":
     args = get_args()
-    args.filepath = f'{args.fine_tune_mode}-{args.epochs}-{args.lr}-multitask.pt' # Save path.
+
+    if args.use_cross_task_data:
+        cross_task_data = "cross_task_data"
+    else:
+        cross_task_data = ""
+
+    if args.use_flash_attention:
+        flash_attention = "flash_attention"
+    else:
+        flash_attention = ""
+        
+    args.filepath = f'{args.fine_tune_mode}-{cross_task_data}-{flash_attention}-{args.epochs}-{args.lr}-multitask.pt' # Save path.
+
+    args.sst_dev_out = f"predictions/{args.fine_tune_mode}-{cross_task_data}-{flash_attention}-multitask-sst-dev-output.csv"
+    args.sst_test_out = f"predictions/{args.fine_tune_mode}-{cross_task_data}-{flash_attention}-multitask-sst-test-output.csv"
+
+    args.para_dev_out = f"predictions/{args.fine_tune_mode}-{cross_task_data}-{flash_attention}-multitask-para-dev-output.csv"
+    args.para_test_out = f"predictions/{args.fine_tune_mode}-{cross_task_data}-{flash_attention}-multitask-para-test-output.csv"
+
+    args.sts_dev_out = f"predictions/{args.fine_tune_mode}-{cross_task_data}-{flash_attention}-multitask-sts-dev-output.csv"
+    args.sts_test_out = f"predictions/{args.fine_tune_mode}-{cross_task_data}-{flash_attention}-multitask-sts-test-output.csv"
+
+
+    if args.use_flash_attention:
+        from flashattention_bert import BertModel
+    else:
+        from bert import BertModel
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     train_multitask(args)
     test_multitask(args)
